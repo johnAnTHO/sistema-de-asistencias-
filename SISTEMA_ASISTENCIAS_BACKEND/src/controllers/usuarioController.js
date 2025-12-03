@@ -19,14 +19,21 @@ class UsuarioController {
     }
   }
 
-  // Crear nuevo practicante
+  // 🆕 CREAR NUEVO PRACTICANTE - MEJORADO CON HORARIOS
   static async createPracticante(req, res) {
     try {
-      const { dni, nombres, apellidos, email, telefono, area_id, fecha_inicio_practicas, fecha_fin_practicas } = req.body;
+      const { 
+        dni, nombres, apellidos, email, telefono, area_id, 
+        fecha_inicio_practicas, fecha_fin_practicas,
+        horario_maniana = '08:00-12:00',
+        horario_tarde = '14:00-17:00',
+        activo_horario_maniana = true,
+        activo_horario_tarde = true
+      } = req.body;
 
       // Validaciones
-      if (!dni || !nombres || !apellidos || !area_id) {
-        return res.status(400).json({ error: 'DNI, nombres, apellidos y área son requeridos' });
+      if (!dni || !nombres || !apellidos || !area_id || !fecha_inicio_practicas) {
+        return res.status(400).json({ error: 'DNI, nombres, apellidos, área y fecha de inicio son requeridos' });
       }
 
       // Verificar si DNI ya existe
@@ -38,28 +45,138 @@ class UsuarioController {
       // Hash de contraseña (DNI por defecto)
       const passwordHash = await bcrypt.hash(dni, 10);
 
-      // Crear usuario
-      const usuario = await Usuario.create({
-        dni,
-        nombres,
-        apellidos,
-        email,
-        telefono,
-        password: passwordHash,
-        rol: 'practicante',
-        area_id,
-        fecha_inicio_practicas,
-        fecha_fin_practicas
-      });
+      // 🆕 CREAR USUARIO CON HORARIOS
+      const result = await pool.query(
+        `INSERT INTO usuarios (
+          dni, nombres, apellidos, email, telefono, password, rol, area_id,
+          fecha_inicio_practicas, fecha_fin_practicas,
+          horario_maniana, horario_tarde,
+          activo_horario_maniana, activo_horario_tarde,
+          activo, fecha_registro
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'practicante', $7, $8, $9, $10, $11, $12, $13, true, CURRENT_TIMESTAMP)
+        RETURNING id, dni, nombres, apellidos, email, rol, area_id, 
+                 fecha_inicio_practicas, fecha_fin_practicas,
+                 horario_maniana, horario_tarde,
+                 activo_horario_maniana, activo_horario_tarde`,
+        [
+          dni, nombres, apellidos, email, telefono, passwordHash, area_id,
+          fecha_inicio_practicas, fecha_fin_practicas,
+          horario_maniana, horario_tarde,
+          activo_horario_maniana, activo_horario_tarde
+        ]
+      );
 
       res.status(201).json({
         message: 'Practicante registrado exitosamente',
-        usuario,
-        password_temporal: dni
+        usuario: result.rows[0],
+        credenciales: {
+          dni: dni,
+          password_temporal: dni // En producción enviar por email
+        }
       });
 
     } catch (error) {
       console.error('Error creando practicante:', error);
+      res.status(500).json({ error: 'Error interno del servidor: ' + error.message });
+    }
+  }
+
+  // 🆕 ACTUALIZAR PRACTICANTE - NUEVO MÉTODO COMPLETO
+  static async updatePracticante(req, res) {
+    try {
+      const { id } = req.params;
+      const {
+        nombres, apellidos, email, telefono, area_id,
+        fecha_inicio_practicas, fecha_fin_practicas,
+        horario_maniana, horario_tarde,
+        activo_horario_maniana, activo_horario_tarde,
+        activo
+      } = req.body;
+
+      // Verificar que sea admin
+      if (req.usuario.rol !== 'admin') {
+        return res.status(403).json({ error: 'Solo administradores pueden actualizar practicantes' });
+      }
+
+      // Verificar si el practicante existe
+      const practicanteExists = await pool.query(
+        'SELECT id FROM usuarios WHERE id = $1 AND rol = $2',
+        [id, 'practicante']
+      );
+
+      if (practicanteExists.rows.length === 0) {
+        return res.status(404).json({ error: 'Practicante no encontrado' });
+      }
+
+      // Actualizar practicante
+      const result = await pool.query(
+        `UPDATE usuarios SET 
+          nombres = COALESCE($1, nombres),
+          apellidos = COALESCE($2, apellidos),
+          email = COALESCE($3, email),
+          telefono = COALESCE($4, telefono),
+          area_id = COALESCE($5, area_id),
+          fecha_inicio_practicas = COALESCE($6, fecha_inicio_practicas),
+          fecha_fin_practicas = COALESCE($7, fecha_fin_practicas),
+          horario_maniana = COALESCE($8, horario_maniana),
+          horario_tarde = COALESCE($9, horario_tarde),
+          activo_horario_maniana = COALESCE($10, activo_horario_maniana),
+          activo_horario_tarde = COALESCE($11, activo_horario_tarde),
+          activo = COALESCE($12, activo)
+        WHERE id = $13 AND rol = 'practicante'
+        RETURNING id, dni, nombres, apellidos, email, telefono, area_id,
+                 fecha_inicio_practicas, fecha_fin_practicas,
+                 horario_maniana, horario_tarde,
+                 activo_horario_maniana, activo_horario_tarde,
+                 activo`,
+        [
+          nombres, apellidos, email, telefono, area_id,
+          fecha_inicio_practicas, fecha_fin_practicas,
+          horario_maniana, horario_tarde,
+          activo_horario_maniana, activo_horario_tarde,
+          activo, id
+        ]
+      );
+
+      res.json({
+        message: 'Practicante actualizado exitosamente',
+        practicante: result.rows[0]
+      });
+
+    } catch (error) {
+      console.error('Error actualizando practicante:', error);
+      res.status(500).json({ error: 'Error interno del servidor: ' + error.message });
+    }
+  }
+
+  // 🆕 OBTENER DETALLES DE UN PRACTICANTE - NUEVO MÉTODO
+  static async getPracticanteById(req, res) {
+    try {
+      const { id } = req.params;
+
+      // Verificar permisos: practicante solo puede ver su propio perfil
+      if (req.usuario.rol === 'practicante' && req.usuario.id != id) {
+        return res.status(403).json({ error: 'Solo puedes ver tu propio perfil' });
+      }
+
+      const result = await pool.query(
+        `SELECT u.*, a.nombre as area_nombre 
+         FROM usuarios u 
+         LEFT JOIN areas a ON u.area_id = a.id 
+         WHERE u.id = $1 AND u.rol = 'practicante'`,
+        [id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Practicante no encontrado' });
+      }
+
+      res.json({
+        practicante: result.rows[0]
+      });
+
+    } catch (error) {
+      console.error('Error obteniendo practicante:', error);
       res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -95,7 +212,7 @@ class UsuarioController {
     }
   }
 
-  // Obtener perfil completo del practicante
+  // Obtener perfil completo del practicante - CORREGIDO
   static async getPerfilPracticante(req, res) {
     try {
       const { id } = req.params;
@@ -124,10 +241,10 @@ class UsuarioController {
         [usuarioResult.rows[0].area_id]
       );
 
-      // Obtener asistencias del último mes
+      // Obtener asistencias del último mes - CORREGIDO: quitado campo justificacion
       const asistenciasResult = await pool.query(
         `SELECT fecha, hora_entrada, hora_salida, estado, minutos_tardanza, 
-                turno, justificacion, observaciones, tipo_registro_entrada
+                turno, observaciones, tipo_registro_entrada
          FROM asistencias 
          WHERE usuario_id = $1 AND fecha >= CURRENT_DATE - INTERVAL '30 days'
          ORDER BY fecha DESC, turno DESC`,
@@ -155,13 +272,20 @@ class UsuarioController {
           area_nombre: areaResult.rows[0]?.nombre || 'Sin área'
         },
         asistencias: asistenciasResult.rows,
-        estadisticas: estadisticasResult.rows[0],
+        estadisticas: estadisticasResult.rows[0] || {
+          total_registros: 0,
+          puntuales: 0,
+          tardanzas: 0,
+          faltas: 0,
+          total_minutos_tardanza: 0,
+          promedio_tardanza: 0
+        },
         total_asistencias: asistenciasResult.rows.length
       });
 
     } catch (error) {
       console.error('Error obteniendo perfil:', error);
-      res.status(500).json({ error: 'Error interno del servidor' });
+      res.status(500).json({ error: 'Error interno del servidor: ' + error.message });
     }
   }
 
@@ -200,7 +324,39 @@ class UsuarioController {
     }
   }
 
-  // ✅ CORREGIDO: Eliminar practicante (solo admin)
+  // 🆕 REACTIVAR PRACTICANTE - NUEVO MÉTODO
+  static async reactivarPracticante(req, res) {
+    try {
+      const { id } = req.params;
+
+      // Verificar que sea admin
+      if (req.usuario.rol !== 'admin') {
+        return res.status(403).json({ error: 'Solo administradores pueden reactivar practicantes' });
+      }
+
+      const result = await pool.query(
+        `UPDATE usuarios SET activo = true 
+         WHERE id = $1 AND rol = 'practicante'
+         RETURNING id, dni, nombres, apellidos, activo`,
+        [id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Practicante no encontrado' });
+      }
+
+      res.json({
+        message: 'Practicante reactivado exitosamente',
+        practicante: result.rows[0]
+      });
+
+    } catch (error) {
+      console.error('Error reactivando practicante:', error);
+      res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  }
+
+  // Eliminar practicante
   static async deletePracticante(req, res) {
     try {
       const { id } = req.params;

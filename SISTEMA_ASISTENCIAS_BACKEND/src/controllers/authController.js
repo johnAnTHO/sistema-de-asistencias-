@@ -1,94 +1,129 @@
+// CORRIGE tu AuthController.js - VERSIÓN SIN CAMBIAR LA BD
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Usuario = require('../models/Usuario');
 
 class AuthController {
-  // Login de usuarios
   static async login(req, res) {
     try {
       const { dni, password } = req.body;
 
-      // Validaciones básicas
       if (!dni || !password) {
-        return res.status(400).json({ error: 'DNI y contraseña son requeridos' });
+        return res.status(400).json({ 
+          success: false,
+          error: 'DNI y contraseña son requeridos' 
+        });
       }
 
-      // Buscar usuario
       const usuario = await Usuario.findByDni(dni);
       if (!usuario) {
-        return res.status(401).json({ error: 'Credenciales inválidas' });
+        return res.status(401).json({ 
+          success: false,
+          error: 'Credenciales inválidas' 
+        });
       }
 
-      // Verificar contraseña
       const passwordValido = await bcrypt.compare(password, usuario.password);
       if (!passwordValido) {
-        return res.status(401).json({ error: 'Credenciales inválidas' });
+        return res.status(401).json({ 
+          success: false,
+          error: 'Credenciales inválidas' 
+        });
       }
 
-      // Generar token
+      // 🎯 CRÍTICO: Calcular es_admin basado en rol
+      const es_admin = usuario.rol === 'admin'; // true/false
+
       const token = jwt.sign(
         { 
           id: usuario.id, 
           dni: usuario.dni, 
           rol: usuario.rol,
-          area_id: usuario.area_id
+          es_admin: es_admin  // ← Ahora sí es boolean
         },
         process.env.JWT_SECRET || 'secret_key_muni_sjb',
         { expiresIn: '8h' }
       );
 
-      res.json({
-        message: 'Login exitoso',
-        token,
-        usuario: {
+      // 🎯 RESPUESTA EXACTA QUE EL FRONTEND NECESITA
+      const response = {
+        success: true,
+        token: token,
+        user: {
           id: usuario.id,
           dni: usuario.dni,
           nombres: usuario.nombres,
           apellidos: usuario.apellidos,
           email: usuario.email,
           rol: usuario.rol,
+          es_admin: es_admin,  // ← boolean calculado
           area_id: usuario.area_id,
           area_nombre: usuario.area_nombre
-        }
+        },
+        message: 'Login exitoso'
+      };
+
+      console.log('✅ Login exitoso - Datos enviados:', {
+        dni: response.user.dni,
+        rol: response.user.rol,
+        es_admin: response.user.es_admin,
+        tipo: typeof response.user.es_admin
       });
 
+      res.json(response);
+
     } catch (error) {
-      console.error('Error en login:', error);
-      res.status(500).json({ error: 'Error interno del servidor' });
+      console.error('🔥 Error en login:', error);
+      res.status(500).json({ 
+        success: false,
+        error: 'Error interno del servidor' 
+      });
     }
   }
 
-  // Verificar token
   static async verifyToken(req, res) {
     try {
       const token = req.header('Authorization')?.replace('Bearer ', '');
       
       if (!token) {
-        return res.status(401).json({ error: 'Token no proporcionado' });
+        return res.status(401).json({ 
+          success: false,
+          error: 'Token no proporcionado' 
+        });
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret_key_muni_sjb');
       
-      // Verificar que usuario aún existe
       const usuario = await Usuario.findById(decoded.id);
       if (!usuario) {
-        return res.status(401).json({ error: 'Usuario no encontrado' });
+        return res.status(401).json({ 
+          success: false,
+          error: 'Usuario no encontrado' 
+        });
       }
 
+      // 🎯 Calcular es_admin aquí también
+      const es_admin = usuario.rol === 'admin';
+
       res.json({ 
-        valid: true, 
-        usuario: {
+        valid: true,
+        success: true,
+        user: {
           id: usuario.id,
           dni: usuario.dni,
           nombres: usuario.nombres,
           apellidos: usuario.apellidos,
           rol: usuario.rol,
+          es_admin: es_admin,  // ← boolean
           area_id: usuario.area_id
         }
       });
 
     } catch (error) {
-      res.status(401).json({ error: 'Token inválido' });
+      res.status(401).json({ 
+        success: false,
+        error: 'Token inválido' 
+      });
     }
   }
 }

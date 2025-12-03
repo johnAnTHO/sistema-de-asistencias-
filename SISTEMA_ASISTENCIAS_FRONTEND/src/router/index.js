@@ -1,72 +1,159 @@
-import { createRouter, createWebHistory } from 'vue-router';
-import { useAuthStore } from '../stores/auth';
+// src/router/index.js - VERSIÓN CORREGIDA
+import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
+
+// Layout
+import AppLayout from '../components/ui/AppLayout.vue'
+
+// Vistas compartidas
+import LoginView from '../views/shared/LoginView.vue'
+import DebugView from '../views/shared/DebugView.vue'
+
+// Vistas de Admin
+import AdminDashboard from '../views/admin/DashboardView.vue'
+import AdminPracticantes from '../views/admin/PracticantesView.vue'
+import AdminReportes from '../views/admin/ReportesView.vue'
+import RegistroPracticanteView from '../views/admin/RegistroPracticanteView.vue'
+
+// Vistas de Practicante
+import PracticanteDashboard from '../views/practicante/DashboardView.vue'
+import PracticanteAsistencias from '../views/practicante/AsistenciasView.vue'
+import PracticantePerfil from '../views/practicante/PerfilView.vue'
+import PracticanteRegistro from '../views/practicante/RegistroView.vue'
 
 const routes = [
-  {
-    path: '/login',
-    name: 'Login',
-    component: () => import('../views/LoginView.vue')
-  },
-  {
-    path: '/dashboard',
-    name: 'Dashboard',
-    component: () => import('../views/DashboardView.vue'),
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/asistencias',
-    name: 'Asistencias',
-    component: () => import('../views/AsistenciasView.vue'),
-    meta: { requiresAuth: true }
-  },
-  // === AGREGA ESTA RUTA NUEVA ===
-  {
-    path: '/debug-auth',
-    name: 'DebugAuth', 
-    component: () => import('../views/DebugAuth.vue')
-  },
-  // === FIN DE RUTA NUEVA ===
+  // Rutas públicas
   {
     path: '/',
     redirect: '/login'
+  },
+  {
+    path: '/login',
+    name: 'Login',
+    component: LoginView,
+    meta: { public: true }
+  },
+  {
+    path: '/debug',
+    name: 'Debug',
+    component: DebugView,
+    meta: { public: true }
+  },
+  
+  // ========== RUTAS DE ADMIN ==========
+  {
+    path: '/admin',
+    component: AppLayout,
+    meta: { requiresAuth: true, requiresAdmin: true },
+    children: [
+      {
+        path: '',
+        redirect: 'dashboard'
+      },
+      {
+        path: 'dashboard',
+        name: 'AdminDashboard',
+        component: AdminDashboard
+      },
+      {
+        path: 'practicantes',
+        name: 'AdminPracticantes',
+        component: AdminPracticantes
+      },
+      {
+        path: 'reportes',
+        name: 'AdminReportes',
+        component: AdminReportes
+      },
+      {
+        path: 'registro-practicante',
+        name: 'RegistroPracticante',
+        component: RegistroPracticanteView
+      },
+      {
+        path: 'registro-manual',
+        name: 'RegistroManual',
+        component: () => import('../views/admin/RegistroManualView.vue') // Lazy load
+      }
+    ]
+  },
+  
+  // ========== RUTAS DE PRACTICANTE ==========
+  {
+    path: '/practicante',
+    component: AppLayout,
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        redirect: 'dashboard'
+      },
+      {
+        path: 'dashboard',
+        name: 'PracticanteDashboard',
+        component: PracticanteDashboard
+      },
+      {
+        path: 'registro',
+        name: 'PracticanteRegistro',
+        component: PracticanteRegistro
+      },
+      {
+        path: 'asistencias',
+        name: 'PracticanteAsistencias',
+        component: PracticanteAsistencias
+      },
+      {
+        path: 'perfil',
+        name: 'PracticantePerfil',
+        component: PracticantePerfil
+      }
+    ]
+  },
+  
+  // Ruta 404
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/login'
   }
-];
+]
 
 const router = createRouter({
   history: createWebHistory(),
   routes
-});
+})
 
-// DEBUG DETALLADO DEL ROUTER
+// Guard global
 router.beforeEach((to, from, next) => {
-  const authStore = useAuthStore();
-  const isAuthenticated = authStore.isAuthenticated();
+  const authStore = useAuthStore()
   
-  console.log('🛡️ === NAVIGATION GUARD DEBUG ===');
-  console.log('📍 De:', from.path);
-  console.log('📍 A:', to.path);
-  console.log('🔐 Requiere auth:', to.meta.requiresAuth);
-  console.log('✅ Está autenticado:', isAuthenticated);
-  console.log('🗝️ Token en store:', authStore.token);
-  console.log('💾 Token en localStorage:', localStorage.getItem('token'));
-  console.log('👤 Usuario:', authStore.user);
-
-  // Si la ruta requiere autenticación y NO está autenticado
-  if (to.meta.requiresAuth && !isAuthenticated) {
-    console.log('❌ REDIRIGIENDO A LOGIN - No autenticado');
-    next('/login');
-    return;
+  console.log('🛣️ Navegando a:', to.path)
+  
+  // Rutas públicas
+  if (to.meta.public) {
+    return next()
   }
   
-  // Si está en login y YA está autenticado
-  if (to.name === 'Login' && isAuthenticated) {
-    console.log('✅ REDIRIGIENDO A DASHBOARD - Ya autenticado');
-    next('/dashboard');
-    return;
+  // Verificar autenticación
+  if (!authStore.isAuthenticated) {
+    console.log('🔐 No autenticado, redirigiendo a login')
+    return next('/login')
   }
+  
+  // Verificar permisos de admin
+  if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    console.log('⛔ No es admin, redirigiendo a practicante')
+    return next('/practicante/dashboard')
+  }
+  
+  // Verificar que el practicante no acceda a rutas de admin
+  if (to.path.startsWith('/admin') && !authStore.isAdmin) {
+    console.log('⛔ Practicante intentando acceder a admin')
+    return next('/practicante/dashboard')
+  }
+  
+  console.log('✅ Acceso permitido')
+  next()
+})
 
-  console.log('➡️ NAVEGACIÓN PERMITIDA');
-  next();
-});
-
-export default router;
+export default router

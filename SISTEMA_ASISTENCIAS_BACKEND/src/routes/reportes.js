@@ -7,8 +7,7 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-router.get('/asistencias', ReporteController.getReporteAsistencias);
-router.get('/tardanzas', ReporteController.getReporteTardanzas);
-router.get('/exportar-practicante', authorize(['admin', 'supervisor']), ReporteController.exportarReportePracticante);
+// 📊 REPORTES (SOLO ADMIN)
+router.get('/asistencias', authorize(['admin']), ReporteController.generarReporteAsistencias);
 
 module.exports = router;

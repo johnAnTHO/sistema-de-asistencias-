@@ -1,162 +1,66 @@
 const pool = require('../config/database');
+const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 
 class ReporteController {
-  // Reporte general de asistencias
-  static async getReporteAsistencias(req, res) {
+  
+  // 📊 GENERAR REPORTE DE ASISTENCIAS (PDF O EXCEL)
+  static async generarReporteAsistencias(req, res) {
     try {
-      const { fecha_inicio, fecha_fin, area_id } = req.query;
-
-      let query = `
-        SELECT 
-          u.dni,
-          u.nombres || ' ' || u.apellidos as nombre_completo,
-          a.nombre as area_nombre,
-          COUNT(asist.id) as total_dias,
-          COUNT(CASE WHEN asist.estado = 'completo' THEN 1 END) as dias_completos,
-          COUNT(CASE WHEN asist.estado = 'tardanza' THEN 1 END) as tardanzas,
-          COUNT(CASE WHEN asist.estado = 'falta' THEN 1 END) as faltas,
-          ROUND(AVG(asist.minutos_tardanza), 2) as avg_tardanza,
-          SUM(CASE 
-            WHEN asist.hora_salida IS NOT NULL THEN 
-              EXTRACT(EPOCH FROM (asist.hora_salida - asist.hora_entrada))/3600
-            ELSE 0 
-          END) as total_horas
-        FROM usuarios u
-        LEFT JOIN areas a ON u.area_id = a.id
-        LEFT JOIN asistencias asist ON u.id = asist.usuario_id
-        WHERE u.rol = 'practicante' AND u.activo = true
-      `;
-
-      let params = [];
-      let paramCount = 0;
-
-      if (fecha_inicio && fecha_fin) {
-        paramCount += 2;
-        query += ` AND asist.fecha BETWEEN $${paramCount-1} AND $${paramCount}`;
-        params.push(fecha_inicio, fecha_fin);
-      } else {
-        query += ` AND asist.fecha >= CURRENT_DATE - INTERVAL '30 days'`;
+      if (req.usuario.rol !== 'admin') {
+        return res.status(403).json({ error: 'Solo administradores pueden generar reportes' });
       }
 
-      if (area_id) {
-        paramCount += 1;
-        query += ` AND u.area_id = $${paramCount}`;
+      const { formato, fecha_inicio, fecha_fin, turno, area_id } = req.query;
+
+      // Validar fechas
+      if (!fecha_inicio || !fecha_fin) {
+        return res.status(400).json({ error: 'Las fechas inicio y fin son requeridas' });
+      }
+
+      // Construir query base
+      let query = `
+        SELECT 
+          a.fecha, a.turno,
+          u.dni, u.nombres, u.apellidos,
+          a.hora_entrada, a.hora_salida,
+          a.minutos_tardanza, a.estado,
+          a.tipo_registro_entrada, a.tipo_registro_salida,
+          ar.nombre as area_nombre
+        FROM asistencias a
+        JOIN usuarios u ON a.usuario_id = u.id
+        LEFT JOIN areas ar ON u.area_id = ar.id
+        WHERE a.fecha BETWEEN $1 AND $2
+        AND u.rol = 'practicante'
+      `;
+
+      const params = [fecha_inicio, fecha_fin];
+
+      // Agregar filtros opcionales
+      if (turno && turno !== 'todos') {
+        query += ' AND a.turno = $3';
+        params.push(turno);
+      }
+
+      if (area_id && area_id !== 'todas') {
+        query += ' AND u.area_id = $' + (params.length + 1);
         params.push(area_id);
       }
 
-      query += `
-        GROUP BY u.id, u.dni, u.nombres, u.apellidos, a.nombre
-        ORDER BY a.nombre, u.apellidos, u.nombres
-      `;
+      query += ' ORDER BY a.fecha DESC, u.apellidos, u.nombres';
 
       const result = await pool.query(query, params);
+      const asistencias = result.rows;
 
-      res.json({
-        fecha_generacion: new Date().toISOString(),
-        parametros: { fecha_inicio, fecha_fin, area_id },
-        total_practicantes: result.rows.length,
-        reporte: result.rows
-      });
-
-    } catch (error) {
-      console.error('Error generando reporte:', error);
-      res.status(500).json({ error: 'Error interno del servidor' });
-    }
-  }
-
-  // Reporte de tardanzas
-  static async getReporteTardanzas(req, res) {
-    try {
-      const { fecha_inicio, fecha_fin } = req.query;
-
-      const result = await pool.query(`
-        SELECT 
-          u.dni,
-          u.nombres || ' ' || u.apellidos as nombre_completo,
-          a.nombre as area_nombre,
-          ast.fecha,
-          ast.hora_entrada,
-          ast.minutos_tardanza,
-          ast.tipo_registro_entrada
-        FROM asistencias ast
-        JOIN usuarios u ON ast.usuario_id = u.id
-        JOIN areas a ON u.area_id = a.id
-        WHERE ast.minutos_tardanza > 0 
-          AND ast.fecha BETWEEN $1 AND $2
-        ORDER BY ast.minutos_tardanza DESC, ast.fecha DESC
-      `, [fecha_inicio || '2024-01-01', fecha_fin || '2024-12-31']);
-
-      res.json({
-        total_tardanzas: result.rows.length,
-        tardanzas: result.rows
-      });
-
-    } catch (error) {
-      console.error('Error generando reporte de tardanzas:', error);
-      res.status(500).json({ error: 'Error interno del servidor' });
-    }
-  }
-
-  // ✅ NUEVO: Exportar reporte de asistencias por practicante
-  static async exportarReportePracticante(req, res) {
-    try {
-      const { usuario_id, fecha_inicio, fecha_fin, formato = 'pdf' } = req.query;
-
-      if (!usuario_id || !fecha_inicio || !fecha_fin) {
-        return res.status(400).json({ error: 'Usuario ID, fecha inicio y fecha fin son requeridos' });
-      }
-
-      // Obtener datos del practicante
-      const usuarioResult = await pool.query(
-        `SELECT u.*, a.nombre as area_nombre 
-         FROM usuarios u 
-         LEFT JOIN areas a ON u.area_id = a.id 
-         WHERE u.id = $1`,
-        [usuario_id]
-      );
-
-      if (usuarioResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Practicante no encontrado' });
-      }
-
-      // Obtener asistencias en el rango de fechas
-      const asistenciasResult = await pool.query(
-        `SELECT fecha, hora_entrada, hora_salida, estado, minutos_tardanza, 
-                turno, justificacion, observaciones, tipo_registro_entrada
-         FROM asistencias 
-         WHERE usuario_id = $1 AND fecha BETWEEN $2 AND $3
-         ORDER BY fecha, turno`,
-        [usuario_id, fecha_inicio, fecha_fin]
-      );
-
-      // Calcular estadísticas
-      const estadisticas = {
-        total_dias: asistenciasResult.rows.length,
-        puntuales: asistenciasResult.rows.filter(a => a.estado === 'puntual').length,
-        tardanzas: asistenciasResult.rows.filter(a => a.estado === 'tardanza').length,
-        faltas: asistenciasResult.rows.filter(a => a.estado === 'falta').length,
-        total_minutos_tardanza: asistenciasResult.rows.reduce((sum, a) => sum + (a.minutos_tardanza || 0), 0)
-      };
-
-      const reporte = {
-        practicante: usuarioResult.rows[0],
-        periodo: { fecha_inicio, fecha_fin },
-        asistencias: asistenciasResult.rows,
-        estadisticas,
-        fecha_generacion: new Date().toISOString(),
-        generado_por: req.usuario.nombres + ' ' + req.usuario.apellidos
-      };
-
-      // Dependiendo del formato, generar diferente respuesta
-      if (formato === 'json') {
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Disposition', `attachment; filename=reporte-${usuarioResult.rows[0].dni}.json`);
-        res.json(reporte);
+      if (formato === 'excel') {
+        await ReporteController.generarExcel(asistencias, res, fecha_inicio, fecha_fin);
+      } else if (formato === 'pdf') {
+        await ReporteController.generarPDF(asistencias, res, fecha_inicio, fecha_fin);
       } else {
-        // Para PDF necesitarías una librería como pdfkit
         res.json({
-          message: 'Reporte generado (formato PDF requeriría librería adicional)',
-          reporte: reporte
+          reporte: 'formato_no_soportado',
+          message: 'Formato no soportado. Use "excel" o "pdf"',
+          datos: asistencias
         });
       }
 
@@ -164,6 +68,73 @@ class ReporteController {
       console.error('Error generando reporte:', error);
       res.status(500).json({ error: 'Error interno del servidor' });
     }
+  }
+
+  // 📊 GENERAR EXCEL
+  static async generarExcel(asistencias, res, fecha_inicio, fecha_fin) {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Asistencias');
+
+      // Estilos
+      worksheet.columns = [
+        { header: 'Fecha', key: 'fecha', width: 12 },
+        { header: 'DNI', key: 'dni', width: 12 },
+        { header: 'Nombres', key: 'nombres', width: 20 },
+        { header: 'Apellidos', key: 'apellidos', width: 20 },
+        { header: 'Área', key: 'area_nombre', width: 15 },
+        { header: 'Turno', key: 'turno', width: 10 },
+        { header: 'Entrada', key: 'hora_entrada', width: 10 },
+        { header: 'Salida', key: 'hora_salida', width: 10 },
+        { header: 'Tardanza (min)', key: 'minutos_tardanza', width: 12 },
+        { header: 'Estado', key: 'estado', width: 12 },
+        { header: 'Tipo Registro', key: 'tipo_registro', width: 15 }
+      ];
+
+      // Encabezados
+      const headerRow = worksheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: '4472C4' }
+      };
+
+      // Datos
+      asistencias.forEach(asistencia => {
+        worksheet.addRow({
+          fecha: asistencia.fecha,
+          dni: asistencia.dni,
+          nombres: asistencia.nombres,
+          apellidos: asistencia.apellidos,
+          area_nombre: asistencia.area_nombre || 'Sin área',
+          turno: asistencia.turno,
+          hora_entrada: asistencia.hora_entrada || '-',
+          hora_salida: asistencia.hora_salida || '-',
+          minutos_tardanza: asistencia.minutos_tardanza || 0,
+          estado: asistencia.estado || 'sin registro',
+          tipo_registro: `${asistencia.tipo_registro_entrada || 'N/A'}`
+        });
+      });
+
+      // Configurar respuesta
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=reporte-asistencias-${fecha_inicio}-a-${fecha_fin}.xlsx`);
+
+      await workbook.xlsx.write(res);
+      res.end();
+
+    } catch (error) {
+      throw new Error('Error generando Excel: ' + error.message);
+    }
+  }
+
+  // 📊 GENERAR PDF (VERSIÓN SIMPLIFICADA)
+  static async generarPDF(asistencias, res, fecha_inicio, fecha_fin) {
+    return res.status(501).json({ 
+      error: 'Generación de PDF temporalmente no disponible',
+      message: 'Use el formato Excel por ahora'
+    });
   }
 }
 

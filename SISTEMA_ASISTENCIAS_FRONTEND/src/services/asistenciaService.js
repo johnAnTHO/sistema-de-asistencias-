@@ -1,27 +1,38 @@
 import api from './api';
 
 export const asistenciaService = {
-  // Registrar entrada biométrica
-  async marcarEntradaBiometrica(datosBiometricos) {
-    const response = await api.post('/asistencias/entrada/biometrica', datosBiometricos);
-    return response.data;
+  // Registro biométrico/DNI
+  registrarEntradaBiometrica(data) {
+    return api.post('/asistencias/entrada/biometrica', data);
   },
 
-  // Registrar salida biométrica  
-  async marcarSalidaBiometrica(datosBiometricos) {
-    const response = await api.post('/asistencias/salida/biometrica', datosBiometricos);
-    return response.data;
+  registrarSalidaBiometrica(data) {
+    return api.post('/asistencias/salida/biometrica', data);
   },
 
-  // Obtener asistencias del día
-  async getAsistenciasHoy() {
-    const response = await api.get('/asistencias/hoy');
-    return response.data;
+  registrarEntradaDNI(data) {
+    return api.post('/asistencias/entrada/dni', data);
   },
 
-  // Obtener mis asistencias
-  async getMisAsistencias() {
-    const response = await api.get('/asistencias/mis-asistencias');
-    return response.data;
+  registrarSalidaDNI(data) {
+    return api.post('/asistencias/salida/dni', data);
+  },
+
+  // Para practicantes
+  getMisAsistencias(params = {}) {
+    return api.get('/asistencias/mis-asistencias', { params });
+  },
+
+  getMiResumen(mes, anio) {
+    return api.get(`/asistencias/mi-resumen?mes=${mes}&anio=${anio}`);
+  },
+
+  // Para administradores
+  registrarAsistenciaManual(data) {
+    return api.post('/asistencias/manual', data);
+  },
+
+  getAsistenciasHoy() {
+    return api.get('/asistencias/hoy');
   }
 };

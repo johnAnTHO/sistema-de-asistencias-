@@ -1,108 +1,119 @@
-import { defineStore } from 'pinia';
-import { ref } from 'vue';
-import { authService } from '../services/auth';
+// src/stores/auth.js - Asegúrate que isAdmin use user.es_admin
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { authService } from '../services/authService'
+import axios from 'axios'
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref(null);
-  const token = ref(localStorage.getItem('token'));
-  const loading = ref(false);
-
-  // DEBUG: Verificar carga inicial
-  console.log('🔄 AuthStore inicializado');
-  console.log('💾 Token al cargar:', token.value);
-  console.log('👤 User al cargar:', user.value);
-
-  // Cargar usuario desde localStorage
-  const userData = localStorage.getItem('user');
-  if (userData) {
-    try {
-      user.value = JSON.parse(userData);
-      console.log('✅ Usuario cargado desde localStorage');
-    } catch (e) {
-      console.error('❌ Error cargando usuario:', e);
-      localStorage.removeItem('user');
-    }
-  }
+  const user = ref(JSON.parse(localStorage.getItem('user')) || null)
+  const token = ref(localStorage.getItem('token') || null)
+  
+  // 🎯 Computed CORREGIDOS
+  const isAuthenticated = computed(() => {
+    const auth = !!token.value
+    console.log('🔐 isAuthenticated computed:', auth)
+    return auth
+  })
+  
+  const isAdmin = computed(() => {
+    // Usa user.value?.es_admin que ahora será boolean
+    const admin = user.value?.es_admin === true
+    console.log('👑 isAdmin computed:', admin, '- Valor es_admin:', user.value?.es_admin)
+    return admin
+  })
+  
+  const userName = computed(() => {
+    return user.value ? `${user.value.nombres} ${user.value.apellidos}` : ''
+  })
 
   const login = async (credentials) => {
     try {
-      loading.value = true;
-      console.log('🔐 INICIANDO LOGIN...', credentials);
+      console.log('🔐 STORE: Iniciando login...')
+      const data = await authService.login(credentials)
       
-      // LIMPIAR TOKENS ANTERIORES (por si acaso)
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      console.log('📦 STORE: Datos recibidos del backend:', {
+        success: data.success,
+        hasToken: !!data.token,
+        hasUser: !!data.user,
+        userEsAdmin: data.user?.es_admin,
+        userEsAdminType: typeof data.user?.es_admin
+      })
       
-      const response = await authService.login(credentials);
-      
-      // VERIFICAR RESPUESTA
-      console.log('📥 Respuesta del backend:', response);
-      
-      if (!response.token) {
-        throw new Error('No se recibió token del servidor');
+      if (data.success && data.token && data.user) {
+        // CRÍTICO: Verificar que es_admin sea boolean
+        if (typeof data.user.es_admin !== 'boolean') {
+          console.warn('⚠️ es_admin no es boolean, forzando conversión')
+          data.user.es_admin = data.user.es_admin === true || data.user.es_admin === 'true'
+        }
+        
+        // Actualizar estado
+        token.value = data.token
+        user.value = data.user
+        
+        // Guardar en localStorage
+        localStorage.setItem('token', data.token)
+        localStorage.setItem('user', JSON.stringify(data.user))
+        
+        // Configurar axios
+        axios.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
+        
+        console.log('✅ STORE: Login completado - Estado actual:')
+        console.log('- token:', !!token.value)
+        console.log('- user:', user.value)
+        console.log('- isAuthenticated:', isAuthenticated.value)
+        console.log('- isAdmin:', isAdmin.value)
+        
+        return data
+      } else {
+        throw new Error('Respuesta inválida del servidor')
       }
-      
-      token.value = response.token;
-      user.value = response.user;
-      
-      // VERIFICAR QUE SE GUARDÓ
-      console.log('💾 Guardando en localStorage...');
-      localStorage.setItem('token', response.token);
-      localStorage.setItem('user', JSON.stringify(response.user));
-      
-      // VERIFICAR QUE SE GUARDÓ CORRECTAMENTE
-      const savedToken = localStorage.getItem('token');
-      const savedUser = localStorage.getItem('user');
-      console.log('✅ Token guardado:', !!savedToken);
-      console.log('✅ User guardado:', !!savedUser);
-      console.log('✅ Store actualizado - token:', token.value);
-      console.log('✅ Store actualizado - user:', user.value);
-      
-      return response;
       
     } catch (error) {
-      console.error('❌ ERROR EN LOGIN:', error);
-      
-      // LIMPIAR EN CASO DE ERROR
-      token.value = null;
-      user.value = null;
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      
-      if (error.response) {
-        const message = error.response.data?.message || error.response.data?.error || 'Error de autenticación';
-        throw new Error(message);
-      } else if (error.request) {
-        throw new Error('No se pudo conectar con el servidor');
-      } else {
-        throw new Error('Error de configuración');
-      }
-    } finally {
-      loading.value = false;
+      console.error('❌ STORE: Error en login:', error)
+      logout()
+      throw error
     }
-  };
+  }
 
+  // ... resto del código (verifyAuth, logout, initialize) igual
   const logout = () => {
-    console.log('🚪 CERRANDO SESIÓN...');
-    token.value = null;
-    user.value = null;
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    console.log('✅ Sesión cerrada');
-  };
+    console.log('🔓 Logout ejecutado')
+    user.value = null
+    token.value = null
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    delete axios.defaults.headers.common['Authorization']
+  }
 
-  const isAuthenticated = () => {
-    const hasToken = !!token.value;
-    console.log('🔐 isAuthenticated():', hasToken, 'Token:', token.value);
-    return hasToken;
-  };
+  const verifyAuth = async () => {
+    try {
+      const data = await authService.verifyToken()
+      if (data.valid) {
+        user.value = data.user
+        return data
+      }
+    } catch (error) {
+      logout()
+      throw error
+    }
+  }
+
+  const initialize = () => {
+    if (token.value) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
+    }
+  }
+
+  initialize()
 
   return {
     user,
     token,
-    loading,
+    isAuthenticated,
+    isAdmin,
+    userName,
     login,
-    logout,
-    isAuthenticated
-  };
-});
+    verifyAuth,
+    logout
+  }
+})

@@ -96,35 +96,54 @@ class Asistencia {
     
     return result.rows[0];
   }
+// ⏰ CALCULAR ESTADO Y TARDANZAS MEJORADO
+static calcularEstadoYMinutos(hora_entrada, turno, usuario) {
+  if (!hora_entrada) {
+    return { estado: 'falta', minutos_tardanza: 0 };
+  }
 
-  // ✅ NUEVO: Calcular estado y minutos de tardanza con soporte para múltiples horarios
-  static calcularEstadoYMinutos(hora_entrada, turno) {
-    if (!hora_entrada) return { estado: 'falta', minutos_tardanza: 0 };
+  try {
+    // Obtener horario según turno y usuario
+    let horario_entrada, tolerancia = 15; // 15 minutos de tolerancia
     
-    // Definir horarios según turno
-    const horarios = {
-      'maniana': { entrada: '08:00:00', tolerancia: 10, salida: '12:00:00' },
-      'tarde': { entrada: '14:00:00', tolerancia: 10, salida: '17:00:00' }
-    };
-    
-    const horario = horarios[turno];
-    if (!horario) return { estado: 'falta', minutos_tardanza: 0 };
-    
-    const [h_ent, m_ent, s_ent] = hora_entrada.split(':').map(Number);
-    const [h_lim, m_lim, s_lim] = horario.entrada.split(':').map(Number);
-    
+    if (turno === 'mañana') {
+      if (usuario && usuario.horario_maniana) {
+        horario_entrada = usuario.horario_maniana.split('-')[0];
+      } else {
+        horario_entrada = '08:00'; // Horario por defecto mañana
+      }
+    } else if (turno === 'tarde') {
+      if (usuario && usuario.horario_tarde) {
+        horario_entrada = usuario.horario_tarde.split('-')[0];
+      } else {
+        horario_entrada = '14:00'; // Horario por defecto tarde
+      }
+    } else {
+      return { estado: 'falta', minutos_tardanza: 0 };
+    }
+
+    // Convertir a minutos
+    const [h_ent, m_ent] = hora_entrada.split(':').map(Number);
+    const [h_lim, m_lim] = horario_entrada.split(':').map(Number);
+
     const entradaMinutos = h_ent * 60 + m_ent;
     const limiteMinutos = h_lim * 60 + m_lim;
     const diferencia = entradaMinutos - limiteMinutos;
-    
-    if (diferencia <= horario.tolerancia) {
+
+    // Determinar estado
+    if (diferencia <= tolerancia) {
       return { estado: 'puntual', minutos_tardanza: 0 };
     } else if (diferencia <= 180) { // Máximo 3 horas de tardanza
       return { estado: 'tardanza', minutos_tardanza: diferencia };
     } else {
       return { estado: 'falta', minutos_tardanza: 0 };
     }
+
+  } catch (error) {
+    console.error('Error calculando estado:', error);
+    return { estado: 'falta', minutos_tardanza: 0 };
   }
 }
-
+}
+  
 module.exports = Asistencia;

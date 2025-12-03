@@ -1,21 +1,27 @@
 ﻿const express = require('express');
 const UsuarioController = require('../controllers/usuarioController');
 const authMiddleware = require('../middleware/auth');
-const { authorize, soloPropiosDatos } = require('../middleware/authorize');
+const { authorize } = require('../middleware/authorize');
 
 const router = express.Router();
+
 router.use(authMiddleware);
 
-// Gestión de practicantes
-router.get('/practicantes', authorize(['admin', 'supervisor']), UsuarioController.getPracticantes);
+// 👥 CRUD COMPLETO DE PRACTICANTES
 router.post('/practicantes', authorize(['admin']), UsuarioController.createPracticante);
-router.delete('/practicantes/:id', authorize(['admin']), UsuarioController.deletePracticante); // ✅ RUTA DELETE
+router.get('/practicantes', authorize(['admin']), UsuarioController.getPracticantes);
+router.get('/practicantes/:id', UsuarioController.getPracticanteById); // ✅ NUEVA
+router.put('/practicantes/:id', authorize(['admin']), UsuarioController.updatePracticante); // ✅ NUEVA
+router.patch('/practicantes/:id/reactivar', authorize(['admin']), UsuarioController.reactivarPracticante); // ✅ NUEVA
+router.delete('/practicantes/:id', authorize(['admin']), UsuarioController.deletePracticante);
 
-// Perfil y foto
-router.get('/:id/perfil', soloPropiosDatos, UsuarioController.getPerfilPracticante);
-router.put('/:id/foto', soloPropiosDatos, UsuarioController.actualizarFotoPerfil);
+// 📸 FOTO DE PERFIL
+router.patch('/:id/foto', UsuarioController.actualizarFotoPerfil);
 
-// Datos biométricos
-router.put('/:id/biometricos', authorize(['admin', 'supervisor']), UsuarioController.updateBiometricos);
+// 🔐 DATOS BIOMÉTRICOS
+router.patch('/:id/biometricos', authorize(['admin']), UsuarioController.updateBiometricos);
+
+// 👤 PERFIL
+router.get('/:id/perfil', UsuarioController.getPerfilPracticante);
 
 module.exports = router;
